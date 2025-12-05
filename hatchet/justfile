@@ -1,0 +1,104 @@
+# IDP Hatchet Development Commands
+
+set dotenv-load
+
+# Default recipe - show help
+default:
+    @just --list
+
+# Start all infrastructure (Hatchet + LocalStack)
+up:
+    docker-compose up -d
+    @echo "Waiting for services to be healthy..."
+    @sleep 10
+    docker-compose ps
+    @echo ""
+    @echo "Hatchet Dashboard: http://localhost:8081"
+    @echo "LocalStack: http://localhost:4566"
+
+# Stop all infrastructure
+down:
+    docker-compose down
+
+# View logs
+logs service="":
+    docker-compose logs -f {{service}}
+
+# Initialize OpenTofu
+infra-init:
+    cd infra && tofu init
+
+# Plan infrastructure changes
+infra-plan:
+    cd infra && tofu plan
+
+# Apply infrastructure (create IAM roles in LocalStack)
+infra-apply:
+    cd infra && tofu apply -auto-approve
+
+# Destroy infrastructure
+infra-destroy:
+    cd infra && tofu destroy -auto-approve
+
+# Show OpenTofu outputs (role ARNs, example input)
+infra-output:
+    cd infra && tofu output
+
+# Install Python dependencies
+deps:
+    pip install -r requirements.txt
+
+# Start the Hatchet worker
+worker:
+    python -m src.workers.main
+
+# Run workflow tests
+test:
+    python scripts/test_workflow.py
+
+# Full setup: start infra, provision IAM, install deps
+setup: up
+    @echo "Waiting for LocalStack to be ready..."
+    @sleep 5
+    just infra-init
+    just infra-apply
+    just deps
+    @echo ""
+    @echo "Setup complete!"
+    @echo ""
+    @echo "Next steps:"
+    @echo "  1. Get API token from http://localhost:8081"
+    @echo "  2. export HATCHET_CLIENT_TOKEN='your-token'"
+    @echo "  3. just worker  (in a separate terminal)"
+    @echo "  4. just test"
+
+# Check health of all services
+health:
+    @echo "Checking service health..."
+    @curl -s http://localhost:4566/_localstack/health | python -m json.tool || echo "LocalStack not ready"
+    @echo ""
+    @docker-compose ps
+
+# Clean up everything (volumes included)
+clean:
+    docker-compose down -v
+    rm -rf infra/.terraform infra/.terraform.lock.hcl infra/terraform.tfstate*
+
+# Trigger a single workflow run manually
+trigger-workflow:
+    python -c "import asyncio; from scripts.test_workflow import test_successful_escalation; asyncio.run(test_successful_escalation())"
+
+# Open Hatchet dashboard
+dashboard:
+    open http://localhost:8081
+
+# Show environment variables needed
+env:
+    @echo "Required environment variables:"
+    @echo ""
+    @echo "export HATCHET_CLIENT_TOKEN='<from http://localhost:8081>'"
+    @echo "export HATCHET_CLIENT_TLS_STRATEGY='none'  # Required for local dev"
+    @echo "export AWS_ENDPOINT_URL='http://localhost:4566'"
+    @echo "export AWS_ACCESS_KEY_ID='test'"
+    @echo "export AWS_SECRET_ACCESS_KEY='test'"
+    @echo "export AWS_REGION='us-east-1'"
