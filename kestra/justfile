@@ -1,0 +1,114 @@
+# IDP Kestra Development Commands
+
+set dotenv-load
+
+# Default recipe - show help
+default:
+    @just --list
+
+# Start all infrastructure (Kestra + LocalStack)
+up:
+    docker-compose up -d
+    @echo "Waiting for services to be healthy..."
+    @sleep 10
+    docker-compose ps
+    @echo ""
+    @echo "Kestra Dashboard: http://localhost:8082"
+    @echo "LocalStack: http://localhost:4567"
+
+# Stop all infrastructure
+down:
+    docker-compose down
+
+# View logs
+logs service="":
+    docker-compose logs -f {{service}}
+
+# Initialize OpenTofu
+infra-init:
+    cd infra && tofu init
+
+# Plan infrastructure changes
+infra-plan:
+    cd infra && tofu plan \
+      -var="kestra_url=${KESTRA_URL}" \
+      -var="kestra_username=${KESTRA_USERNAME}" \
+      -var="kestra_password=${KESTRA_PASSWORD}"
+
+# Apply infrastructure (create IAM roles in LocalStack)
+infra-apply:
+    cd infra && tofu apply -auto-approve
+
+# Destroy infrastructure
+infra-destroy:
+    cd infra && tofu destroy -auto-approve
+
+# Show OpenTofu outputs (role ARNs, example input)
+infra-output:
+    cd infra && tofu output
+
+# Deploy flows and scripts to Kestra (via Terraform)
+deploy:
+    @echo "Deploying flows and scripts to Kestra..."
+    cd infra && tofu apply -auto-approve \
+      -var="kestra_url=${KESTRA_URL}" \
+      -var="kestra_username=${KESTRA_USERNAME}" \
+      -var="kestra_password=${KESTRA_PASSWORD}"
+    @echo ""
+    @echo "Deployment complete! Flow available at:"
+    @echo "  ${KESTRA_URL}/ui/flows/edit/idp.aws/aws-privilege-escalation"
+
+# Full setup: start infra, provision IAM, deploy flows
+setup: up
+    @echo "Waiting for services to be ready..."
+    @sleep 10
+    just infra-init
+    just deploy
+    @echo ""
+    @echo "Setup complete!"
+    @echo ""
+    @echo "Next steps:"
+    @echo "  1. Open http://localhost:8082"
+    @echo "  2. Go to Flows > idp.aws > aws-privilege-escalation"
+    @echo "  3. Click Execute and provide test inputs"
+
+# Check health of all services
+health:
+    @echo "Checking service health..."
+    @curl -s http://localhost:4567/_localstack/health | python -m json.tool || echo "LocalStack not ready"
+    @echo ""
+    @docker-compose ps
+
+# Clean up everything (volumes included)
+clean:
+    docker-compose down -v
+    rm -rf infra/.terraform infra/.terraform.lock.hcl infra/terraform.tfstate*
+
+# Open Kestra dashboard
+dashboard:
+    open http://localhost:8082
+
+# Trigger the workflow with test inputs
+trigger:
+    @echo "Triggering AWS privilege escalation workflow..."
+    curl -X POST "${KESTRA_URL}/api/v1/executions/idp.aws/aws-privilege-escalation" \
+      -u "${KESTRA_USERNAME}:${KESTRA_PASSWORD}" \
+      -H "Content-Type: multipart/form-data" \
+      -F "user_email=developer@example.com" \
+      -F "role_arn=arn:aws:iam::000000000000:role/developer-elevated" \
+      -F "duration_hours=2" \
+      -F "justification=Debugging production issue INCIDENT-1234" \
+      -F "approver_email=manager@example.com"
+
+# Full test: setup and trigger
+test: setup trigger
+
+# Show environment variables needed
+env:
+    @echo "LocalStack endpoint: http://localhost:4567"
+    @echo ""
+    @echo "For testing AWS CLI against LocalStack:"
+    @echo "  export AWS_ENDPOINT_URL='http://localhost:4567'"
+    @echo "  export AWS_ACCESS_KEY_ID='test'"
+    @echo "  export AWS_SECRET_ACCESS_KEY='test'"
+    @echo "  export AWS_REGION='us-east-1'"

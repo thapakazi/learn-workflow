@@ -1,0 +1,112 @@
+id: aws-privilege-escalation
+namespace: idp.aws
+
+description: |
+  Grants temporary elevated AWS permissions with approval flow.
+  Uses STS AssumeRole to provide time-limited credentials.
+
+inputs:
+  - id: user_email
+    type: STRING
+    description: Email of the user requesting access
+
+  - id: role_arn
+    type: STRING
+    description: ARN of the IAM role to assume
+    defaults: "arn:aws:iam::000000000000:role/developer-elevated"
+
+  - id: duration_hours
+    type: INT
+    description: Duration of access in hours (max 8)
+    defaults: 2
+
+  - id: justification
+    type: STRING
+    description: Business justification for the access request
+
+  - id: approver_email
+    type: STRING
+    description: Email of the approver
+    defaults: "manager@example.com"
+
+tasks:
+  - id: validate
+    type: io.kestra.plugin.scripts.python.Commands
+    description: Validate the privilege escalation request
+    containerImage: python:3.11-slim
+    namespaceFiles:
+      enabled: true
+    beforeCommands:
+      - pip install boto3
+    env:
+      USER_EMAIL: "{{ inputs.user_email }}"
+      ROLE_ARN: "{{ inputs.role_arn }}"
+      DURATION_HOURS: "{{ inputs.duration_hours }}"
+      JUSTIFICATION: "{{ inputs.justification }}"
+      APPROVER_EMAIL: "{{ inputs.approver_email }}"
+    commands:
+      - python scripts/privilege_escalation.py validate
+
+  - id: log_validation
+    type: io.kestra.plugin.core.log.Log
+    message: "Validation completed for user {{ inputs.user_email }}"
+
+  - id: approve
+    type: io.kestra.plugin.core.log.Log
+    description: Process approval (auto-approve for testing)
+    message: |
+      Approval request:
+        User: {{ inputs.user_email }}
+        Role: {{ inputs.role_arn }}
+        Duration: {{ inputs.duration_hours }} hours
+        Justification: {{ inputs.justification }}
+        Approver: {{ inputs.approver_email }}
+        Status: AUTO-APPROVED (testing mode)
+
+  - id: grant
+    type: io.kestra.plugin.scripts.python.Commands
+    description: Grant temporary AWS access using STS AssumeRole
+    containerImage: python:3.11-slim
+    namespaceFiles:
+      enabled: true
+    beforeCommands:
+      - pip install boto3
+    env:
+      AWS_ENDPOINT_URL: "http://localstack:4566"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_REGION: "us-east-1"
+      USER_EMAIL: "{{ inputs.user_email }}"
+      ROLE_ARN: "{{ inputs.role_arn }}"
+      DURATION_HOURS: "{{ inputs.duration_hours }}"
+      JUSTIFICATION: "{{ inputs.justification }}"
+      APPROVER_EMAIL: "{{ inputs.approver_email }}"
+    commands:
+      - python scripts/privilege_escalation.py grant
+
+  - id: notify
+    type: io.kestra.plugin.core.log.Log
+    description: Notify user of the result
+    message: |
+      Notification to {{ inputs.user_email }}:
+      Access has been granted for role {{ inputs.role_arn }}
+      Duration: {{ inputs.duration_hours }} hours
+
+  - id: audit
+    type: io.kestra.plugin.scripts.python.Commands
+    description: Log the entire request for audit trail
+    containerImage: python:3.11-slim
+    namespaceFiles:
+      enabled: true
+    env:
+      EXECUTION_ID: "{{ execution.id }}"
+      USER_EMAIL: "{{ inputs.user_email }}"
+      ROLE_ARN: "{{ inputs.role_arn }}"
+      DURATION_HOURS: "{{ inputs.duration_hours }}"
+      JUSTIFICATION: "{{ inputs.justification }}"
+      APPROVER_EMAIL: "{{ inputs.approver_email }}"
+      GRANTED: "true"
+    beforeCommands:
+      - pip install boto3
+    commands:
+      - python scripts/privilege_escalation.py audit
