@@ -1,0 +1,116 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: aws-privilege-escalation-
+  labels:
+    workflow: privilege-escalation
+spec:
+  entrypoint: privilege-workflow
+
+  arguments:
+    parameters:
+      - name: user_email
+      - name: role_arn
+        value: "arn:aws:iam::000000000000:role/developer-elevated"
+      - name: duration_hours
+        value: "2"
+      - name: justification
+      - name: approver_email
+        value: "manager@example.com"
+
+  templates:
+    # Main DAG
+    - name: privilege-workflow
+      dag:
+        tasks:
+          - name: validate
+            template: run-command
+            arguments:
+              parameters:
+                - name: command
+                  value: validate
+
+          - name: log-approval
+            template: log-message
+            arguments:
+              parameters:
+                - name: message
+                  value: |
+                    Approval request:
+                      User: {{workflow.parameters.user_email}}
+                      Role: {{workflow.parameters.role_arn}}
+                      Duration: {{workflow.parameters.duration_hours}} hours
+                      Status: AUTO-APPROVED (testing mode)
+            dependencies: [validate]
+
+          - name: grant
+            template: run-command
+            arguments:
+              parameters:
+                - name: command
+                  value: grant
+            dependencies: [log-approval]
+
+          - name: notify
+            template: log-message
+            arguments:
+              parameters:
+                - name: message
+                  value: |
+                    Notification to {{workflow.parameters.user_email}}:
+                    Access granted for role {{workflow.parameters.role_arn}}
+                    Duration: {{workflow.parameters.duration_hours}} hours
+            dependencies: [grant]
+
+          - name: audit
+            template: run-command
+            arguments:
+              parameters:
+                - name: command
+                  value: audit
+            dependencies: [grant]
+
+    # Python command template
+    - name: run-command
+      inputs:
+        parameters:
+          - name: command
+      container:
+        image: idp-privilege:latest
+        imagePullPolicy: Never
+        command: [python, /app/scripts/privilege_escalation.py]
+        args: ["{{inputs.parameters.command}}"]
+        env:
+          - name: USER_EMAIL
+            value: "{{workflow.parameters.user_email}}"
+          - name: ROLE_ARN
+            value: "{{workflow.parameters.role_arn}}"
+          - name: DURATION_HOURS
+            value: "{{workflow.parameters.duration_hours}}"
+          - name: JUSTIFICATION
+            value: "{{workflow.parameters.justification}}"
+          - name: APPROVER_EMAIL
+            value: "{{workflow.parameters.approver_email}}"
+          - name: EXECUTION_ID
+            value: "{{workflow.name}}"
+          - name: GRANTED
+            value: "true"
+          # LocalStack connection (in-cluster service)
+          - name: AWS_ENDPOINT_URL
+            value: "http://localstack.localstack.svc.cluster.local:4566"
+          - name: AWS_ACCESS_KEY_ID
+            value: "test"
+          - name: AWS_SECRET_ACCESS_KEY
+            value: "test"
+          - name: AWS_REGION
+            value: "us-east-1"
+
+    # Simple log template
+    - name: log-message
+      inputs:
+        parameters:
+          - name: message
+      container:
+        image: alpine:latest
+        command: [echo]
+        args: ["{{inputs.parameters.message}}"]

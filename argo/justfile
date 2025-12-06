@@ -1,0 +1,134 @@
+# Argo Workflows Development Commands
+
+set dotenv-load
+
+CLUSTER_NAME := "argo-dev"
+ARGO_VERSION := "v3.5.11"
+
+# Default - show help
+default:
+    @just --list
+
+# === Cluster Management ===
+
+# Create Kind cluster
+cluster-create:
+    kind create cluster --name {{CLUSTER_NAME}}
+    kubectl cluster-info --context kind-{{CLUSTER_NAME}}
+
+# Delete Kind cluster
+cluster-delete:
+    kind delete cluster --name {{CLUSTER_NAME}}
+
+# === Argo Workflows ===
+
+# Install Argo Workflows
+argo-install:
+    kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
+    kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/download/{{ARGO_VERSION}}/quick-start-minimal.yaml
+    @echo "Waiting for Argo server to be ready..."
+    kubectl wait --for=condition=available --timeout=120s deployment/argo-server -n argo
+    @echo "Argo Workflows installed!"
+
+# Port forward to Argo UI
+argo-ui:
+    @echo "Argo UI: https://localhost:2746"
+    kubectl -n argo port-forward deployment/argo-server 2746:2746
+
+# === LocalStack (in-cluster) ===
+
+# Deploy LocalStack to cluster
+localstack-deploy:
+    kubectl apply -f k8s/localstack.yaml
+    @echo "Waiting for LocalStack to be ready..."
+    kubectl wait --for=condition=available --timeout=120s deployment/localstack -n localstack
+    @echo "LocalStack deployed!"
+
+# Port forward to LocalStack (for tofu apply)
+localstack-port-forward:
+    @echo "LocalStack: http://localhost:4566"
+    kubectl -n localstack port-forward svc/localstack 4566:4566
+
+# === Infrastructure ===
+
+# Initialize OpenTofu
+infra-init:
+    cd infra && tofu init
+
+# Provision IAM roles in LocalStack (requires port-forward running)
+iam-provision:
+    @echo "Provisioning IAM roles in LocalStack..."
+    @echo "Make sure 'just localstack-port-forward' is running in another terminal!"
+    cd infra && tofu apply -auto-approve
+
+# === Workflow ===
+
+# Build and load custom image into Kind
+image-build:
+    docker build -t idp-privilege:latest .
+    kind load docker-image idp-privilege:latest --name {{CLUSTER_NAME}}
+
+# Submit workflow with test inputs
+trigger:
+    argo submit workflows/aws-privilege.yaml -n argo \
+      -p user_email="developer@example.com" \
+      -p role_arn="arn:aws:iam::000000000000:role/developer-elevated" \
+      -p duration_hours="2" \
+      -p justification="Debugging production issue INCIDENT-1234" \
+      -p approver_email="manager@example.com" \
+      --watch
+
+# List workflows
+list:
+    argo list -n argo
+
+# Get workflow logs
+logs name:
+    argo logs {{name}} -n argo
+
+# Watch workflow status
+watch name:
+    argo watch {{name}} -n argo
+
+# === Full Setup ===
+
+# Complete setup: cluster + argo + localstack + image
+setup: cluster-create argo-install localstack-deploy image-build infra-init
+    @echo ""
+    @echo "Setup complete!"
+    @echo ""
+    @echo "Next steps:"
+    @echo "  1. Run 'just localstack-port-forward' in terminal 1"
+    @echo "  2. Run 'just iam-provision' in terminal 2"
+    @echo "  3. Run 'just argo-ui' in terminal 1 (after IAM is done)"
+    @echo "  4. Run 'just trigger' to execute the workflow"
+
+# Teardown everything
+teardown:
+    kind delete cluster --name {{CLUSTER_NAME}}
+    @echo "Teardown complete"
+
+# === Debugging ===
+
+# Check cluster status
+status:
+    @echo "=== Kind Cluster ==="
+    kind get clusters
+    @echo ""
+    @echo "=== Argo Pods ==="
+    kubectl get pods -n argo
+    @echo ""
+    @echo "=== LocalStack Pods ==="
+    kubectl get pods -n localstack
+
+# Get Argo server logs
+argo-logs:
+    kubectl logs -n argo deployment/argo-server --tail=50
+
+# Get LocalStack logs
+localstack-logs:
+    kubectl logs -n localstack deployment/localstack --tail=50
+
+# Shell into a debug pod
+debug-shell:
+    kubectl run -it --rm debug --image=python:3.11-slim -n argo -- /bin/bash

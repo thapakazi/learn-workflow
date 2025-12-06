@@ -5,6 +5,7 @@
 *** Tools to explore:
 - [X] [[./hatchet][hatchet]] | https://docs.hatchet.run/home/architecture
 - [X] kestra  | https://github.com/kestra-io/kestra
+- [X] argo    | https://github.com/argoproj/argo-workflows
 
 *** Evaluation:
 
