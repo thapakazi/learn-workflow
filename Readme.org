@@ -1,0 +1,26 @@
+#+TITLE: Trying out different workflow tools
+#+DATE: Friday, Dec 05 2025
+
+
+*** Tools to explore:
+- [X] [[./hatchet][hatchet]] | https://docs.hatchet.run/home/architecture
+- [X] kestra  | https://github.com/kestra-io/kestra
+
+*** Evaluation:
+
+- How easy is it to do our tasks:
+
+#+BEGIN_QUOTE
+  lets do a research on a tool that small size company(20-50) can use , like a idp tool you can self-host/open source such that it could be extended to do things like:
+
+- give a temporary privilege escalation to a certain role on aws
+- check for logs on service x
+- fetch graphs from datadog or grafana
+- request access to XYZ app with steps for approval
+- run certain test pipelines
+- generate a new business report
+#+END_QUOTE
+
+- we want it to be simple and stupid
+- has basic ui capability(cli is also fine)
+-
